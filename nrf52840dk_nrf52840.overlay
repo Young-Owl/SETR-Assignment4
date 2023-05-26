@@ -1,0 +1,8 @@
+
+&i2c0 {
+    tempsensor: tempsensor@0b{
+        compatible = "i2c-device";
+        reg = < 0x?? >;
+        label = "TEMPSENSOR";
+    };
+};
