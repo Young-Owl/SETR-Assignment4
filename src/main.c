@@ -20,7 +20,7 @@
 
 /* Button Thread config */
 #define btnThreadPrio 1                             /**<Button Thread priority (default 1) */
-#define btnThreadPeriod 200                         /**<Button Thread periodicity (in ms) */
+#define btnThreadPeriod 1000                        /**<Button Thread periodicity (in ms) */
 K_THREAD_STACK_DEFINE(btnThreadStack, STACK_SIZE);  /* Create thread stack space */
 struct k_thread btnThreadData;                      /**<Button Thread data structure */
 k_tid_t btnThreadID;                                /**<Button Thread ID */
@@ -28,7 +28,7 @@ void btnThread(void *argA, void *argB, void *argC); /* Button Thread code protot
 
 /* Led Thread config */
 #define ledThreadPrio 1                             /**<Led Thread priority (default 1) */
-#define ledThreadPeriod 200                         /**<Led Thread periodicity (in ms) */
+#define ledThreadPeriod 1000                        /**<Led Thread periodicity (in ms) */
 K_THREAD_STACK_DEFINE(ledThreadStack, STACK_SIZE);  /* Create thread stack space */
 struct k_thread ledThreadData;                      /**<Led Thread data structure */
 k_tid_t ledThreadID;                                /**<Led Thread ID */
@@ -36,7 +36,7 @@ void ledThread(void *argA, void *argB, void *argC); /* Led Thread code prototype
 
 /* I2C Thread config */
 #define i2cThreadPrio 1                             /**<I2C Thread priority (default 1) */
-#define i2cThreadPeriod 200                         /**<I2C Thread periodicity (in ms) */
+#define i2cThreadPeriod 1000                        /**<I2C Thread periodicity (in ms) */
 K_THREAD_STACK_DEFINE(i2cThreadStack, STACK_SIZE);  /* Create thread stack space */
 struct k_thread i2cThreadData;                      /**<I2C Thread data structure */
 k_tid_t i2cThreadID;                                /**<I2C Thread ID */
@@ -74,9 +74,13 @@ struct miniData {
 void main(void)
 {
     /* Create the Button Thread */
-	btnThreadID = k_thread_create(&btnThreadData, btnThreadStack,
+	/*btnThreadID = k_thread_create(&btnThreadData, btnThreadStack,
         K_THREAD_STACK_SIZEOF(btnThreadStack), btnThread,
-        NULL, NULL, NULL, btnThreadPrio, 0, K_NO_WAIT);
+        NULL, NULL, NULL, btnThreadPrio, 0, K_NO_WAIT);*/
+
+    i2cThreadID = k_thread_create(&i2cThreadData, i2cThreadStack,
+        K_THREAD_STACK_SIZEOF(i2cThreadStack), i2cThread,
+        NULL, NULL, NULL, i2cThreadPrio, 0, K_NO_WAIT);
 
     return;
 }
@@ -136,7 +140,7 @@ void btnThread(void *argA , void *argB, void *argC)
     }
 
     /* Stop timing functions */
-    soc_timing_stop();
+    timing_stop();
 }
 
 /**
@@ -187,7 +191,7 @@ void ledThread(void *argA , void *argB, void *argC)
     }
 
     /* Stop timing functions */
-    soc_timing_stop();
+    timing_stop();
 }
 
 /**
@@ -209,6 +213,13 @@ void i2cThread(void *argA , void *argB, void *argC)
     if (!device_is_ready(dev_i2c.bus)) { return; }
     uint8_t data;
 
+    /* Write via I2C to make the Temp Sensor go into normal mode */
+    uint8_t config = 0x00;
+    ret = i2c_write_dt(&dev_i2c, &config, sizeof(config));
+    if(ret != 0){
+	    printk("Failed to write to I2C device address %x at reg. %x \n", dev_i2c.addr,config);
+    }
+
     /* Compute next release instant */
     release_time = k_uptime_get() + i2cThreadPeriod;
 
@@ -218,14 +229,7 @@ void i2cThread(void *argA , void *argB, void *argC)
         #ifdef DEBUG
             printk("Thread I2C Activated\n\r");
         #endif  
-        
-        /* Write via I2C to make the Temp Sensor go into normal mode */
-        uint8_t config = 0x00;
-        ret = i2c_write_dt(&dev_i2c, config, sizeof(config));
-        if(ret != 0){
-	        printk("Failed to write to I2C device address %x at reg. %x n", dev_i2c->addr,config[0]);
-        }
-        
+
         /* Read via I2C the temperature */
         ret = i2c_read_dt(&dev_i2c, &data, sizeof(data));
         if (ret < 0) { return; }
@@ -243,5 +247,5 @@ void i2cThread(void *argA , void *argB, void *argC)
     }
 
     /* Stop timing functions */
-    soc_timing_stop();
+    timing_stop();
 }
