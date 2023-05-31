@@ -20,7 +20,7 @@
 
 /* Button Thread config */
 #define btnThreadPrio 1                             /**<Button Thread priority (default 1) */
-#define btnThreadPeriod 1000                        /**<Button Thread periodicity (in ms) */
+volatile uint16_t btnThreadPeriod = 1000;           /**<Button Thread periodicity (in ms) */
 K_THREAD_STACK_DEFINE(btnThreadStack, STACK_SIZE);  /* Create thread stack space */
 struct k_thread btnThreadData;                      /**<Button Thread data structure */
 k_tid_t btnThreadID;                                /**<Button Thread ID */
@@ -28,7 +28,7 @@ void btnThread(void *argA, void *argB, void *argC); /* Button Thread code protot
 
 /* Led Thread config */
 #define ledThreadPrio 1                             /**<Led Thread priority (default 1) */
-#define ledThreadPeriod 1000                        /**<Led Thread periodicity (in ms) */
+volatile uint16_t ledThreadPeriod = 1000;           /**<Led Thread periodicity (in ms) */
 K_THREAD_STACK_DEFINE(ledThreadStack, STACK_SIZE);  /* Create thread stack space */
 struct k_thread ledThreadData;                      /**<Led Thread data structure */
 k_tid_t ledThreadID;                                /**<Led Thread ID */
@@ -36,7 +36,7 @@ void ledThread(void *argA, void *argB, void *argC); /* Led Thread code prototype
 
 /* I2C Thread config */
 #define i2cThreadPrio 1                             /**<I2C Thread priority (default 1) */
-#define i2cThreadPeriod 1000                        /**<I2C Thread periodicity (in ms) */
+volatile uint16_t i2cThreadPeriod = 1000;           /**<I2C Thread periodicity (in ms) */
 K_THREAD_STACK_DEFINE(i2cThreadStack, STACK_SIZE);  /* Create thread stack space */
 struct k_thread i2cThreadData;                      /**<I2C Thread data structure */
 k_tid_t i2cThreadID;                                /**<I2C Thread ID */
@@ -56,6 +56,21 @@ static const struct device * gpio0_dev = DEVICE_DT_GET(GPIO0_NODE);
 #define I2C0_NODE DT_NODELABEL(tempsensor)
 static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C0_NODE);
 
+/* Defines for the */
+#define CMD_SUCCESS       0     /**<Return value when a correct command is read.*/
+#define CMD_ERROR_STRING -1     /**<Return value when an empty string or incomplete command was found.*/
+#define CMD_INVALID      -2     /**<Return value when an invalid command was found.*/
+#define CS_ERROR         -3     /**<Return value when a CS error is detected.*/
+#define STR_WRONG_FORMAT -4     /**<Return value when the string format is wrong.*/             
+
+#define MAX_CMDSTRING_SIZE 20   /**<Maximum size of the command string.*/ 
+#define SOF_SYM '#'	            /**<Start of Frame Symbol.*/
+#define EOF_SYM '\r'            /**<End of Frame Symbol.*/
+
+/* Internal variables for the UART RX processing */
+volatile char cmdString[MAX_CMDSTRING_SIZE];    /**<Command string buffer. */
+static unsigned char cmdStringLen = 0;          /**<Length of the command string. */
+
 /**
  * @brief This structure contains all the data that is shared between the threads.
  *
@@ -63,7 +78,7 @@ static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C0_NODE);
 struct miniData {
     uint8_t led[4];
     uint8_t buttonState[4];
-    float temp;
+    uint16_t temp;
 } miniData;
 
 
@@ -83,6 +98,135 @@ void main(void)
         NULL, NULL, NULL, i2cThreadPrio, 0, K_NO_WAIT);
 
     return;
+}
+
+/**
+ * @brief This function processes commands received via UART.
+ * 
+ * @return int Returns a value to indicate whether the command was valid or not.
+ */
+int cmdProcessor(void)
+{
+	int i = 0, cmdStringRemain = 0;                     /**<Variables to store the index of the SOF and the remaining chars in the cmdString. */
+    char F[3] = {};                                     /**<Variables to store the Frequency values for each char.*/
+	char Cs = 0;                                        /**<Variable to store the Checksum value.*/
+    int freq = 0;                                       /**<Variable to store the frequency value.*/
+
+	/* Detect empty cmd string */
+	if(cmdStringLen == 0)
+		return CMD_ERROR_STRING; 
+	
+	/* Find index of SOF */
+	for(i=0; i < cmdStringLen; i++) {
+		if(cmdString[i] == SOF_SYM) {
+			break;
+		}
+	}
+	
+	/* If a SOF was found look for commands */
+	if(i < cmdStringLen) {
+		if(cmdString[i+1] == 'L' && cmdString[i+2] == 'F') { /* LF command detected */
+            cmdStringRemain = cmdStringLen - 5;
+
+            if(cmdStringRemain > 3) {
+                return STR_WRONG_FORMAT;
+            }
+
+            for(int k = 0; k < cmdStringRemain; k++) {
+                F[k] = cmdString[k+3];
+                if(F[k] < '0' || F[k] > '9') {
+				    return STR_WRONG_FORMAT;
+			    }
+                Cs += (unsigned char)(F[k]);
+            }
+
+			Cs += (unsigned char)('L' + 'F');
+			if(Cs != cmdString[cmdStringLen-1]){
+				return CS_ERROR;
+			}
+			
+			if(cmdString[cmdStringLen] != EOF_SYM){
+				return CMD_ERROR_STRING;
+			}
+
+            for(int k = 0; k < cmdStringRemain; k++) {
+                if(k == 0){
+                    freq += (F[k] - '0') * 100;
+                }
+                else if(k == 1){
+                    freq += (F[k] - '0') * 10;
+                }
+                else if(k == 2){
+                    freq += (F[k] - '0');
+                }
+            }
+
+            ledThreadPeriod = 1/freq;
+
+			return CMD_SUCCESS;
+		}
+
+        if(cmdString[i+1] == 'B' && cmdString[i+2] == 'F') { /* LF command detected */
+            cmdStringRemain = cmdStringLen - 5;
+
+            if(cmdStringRemain > 3) {
+                return STR_WRONG_FORMAT;
+            }
+
+            for(int k = 0; k < cmdStringRemain; k++) {
+                F[k] = cmdString[k+3];
+                if(F[k] < '0' || F[k] > '9') {
+				    return STR_WRONG_FORMAT;
+			    }
+                Cs += (unsigned char)(F[k]);
+            }
+
+			Cs += (unsigned char)('L' + 'F');
+			if(Cs != cmdString[cmdStringLen-1]){
+				return CS_ERROR;
+			}
+			
+			if(cmdString[cmdStringLen] != EOF_SYM){
+				return CMD_ERROR_STRING;
+			}
+
+            for(int k = 0; k < cmdStringRemain; k++) {
+                if(k == 0){
+                    freq += (F[k] - '0') * 100;
+                }
+                else if(k == 1){
+                    freq += (F[k] - '0') * 10;
+                }
+                else if(k == 2){
+                    freq += (F[k] - '0');
+                }
+            }
+
+            btnThreadPeriod = 1/freq;
+
+			return CMD_SUCCESS;
+		}
+		
+		if(cmdString[i+1] == 'S') { /* S command detected */
+			Cs = (unsigned char)('S');
+			if(Cs != cmdString[i+2]){
+				return CS_ERROR;
+			}
+
+			if(cmdString[i+3] != EOF_SYM){
+				return CMD_ERROR_STRING;
+			}
+
+			printf("Setpoint = %d, Output = %d, Error = %d", setpoint, output, error);
+			resetCmdString();
+			return CMD_SUCCESS;
+		}	
+		return CMD_INVALID;	/* No valid command found */
+	}
+	
+	/* cmd string not null and SOF not found */
+	return STR_WRONG_FORMAT;
+
 }
 
 /**
