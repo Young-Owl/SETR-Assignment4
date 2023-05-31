@@ -11,7 +11,7 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/timing/timing.h>   /* for timing services */
 #include <zephyr/drivers/i2c.h>
-#include <drivers/uart.h>
+#include <zephyr/drivers/uart.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -132,10 +132,9 @@ void main(void)
     uint8_t welcome_mesg[] = "UART demo: Type a few chars in a row and then pause for a little while ...\n\r"; 
 
     /* Bind to UART */
-    uart_dev= device_get_binding(DT_LABEL(UART_NODE));
+    uart_dev = device_get_binding(DT_LABEL(UART_NODE));
     if (uart_dev == NULL) {
-        printk("device_get_binding() error for device %s!\n\r", DT_LABEL(UART_NODE));
-        return;
+        return; 
     }
     else {
         printk("UART binding successful\n\r");
@@ -308,8 +307,6 @@ int cmdProcessor(void)
 				return CMD_ERROR_STRING;
 			}
 
-			printf("Setpoint = %d, Output = %d, Error = %d", setpoint, output, error);
-			resetCmdString();
 			return CMD_SUCCESS;
 		}	
 		return CMD_INVALID;	/* No valid command found */
@@ -505,19 +502,20 @@ void uartThread(void *argA , void *argB, void *argC)
             sprintf(rep_mesg,"You typed [%s]\r",rx_chars);  
             
             c = rx_chars[uart_rxbuf_nchar-1];
-           // printk("c = %c\n\r",c);
-            printk("c = %x\n\r",c);
-            printk("uart1 = %u\n\r",uart_rxbuf_nchar);
 
             if(c == 0xd) {
+
+                for(int k = 0; k < uart_rxbuf_nchar; k++){
+                    cmdString[k] = rx_chars[k];
+                }
+                cmdStringLen = uart_rxbuf_nchar;
+
                 for (int i = 0; i < uart_rxbuf_nchar; i++){
                     rx_chars[i] = 0;
                 }
                 uart_rxbuf_nchar = 0;
-                printk("zz\n\r");
-            }
-            printk("uart2 = %u\n\r",uart_rxbuf_nchar);
 
+            }
             
             err = uart_tx(uart_dev, rep_mesg, strlen(rep_mesg), SYS_FOREVER_MS);
             if (err) {
