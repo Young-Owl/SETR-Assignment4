@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 /* Debug define */
 #define DEBUG
@@ -54,8 +55,8 @@ void i2cThread(void *argA, void *argB, void *argC); /* I2C Thread code prototype
 K_THREAD_STACK_DEFINE(uartThreadStack, STACK_SIZE); /* Create thread stack space */
 struct k_thread uartThreadData;                     /**<uart Thread data structure */
 k_tid_t uartThreadID;                               /**<uart Thread ID */
-#define RXBUF_SIZE 20                               /* RX buffer size */
-#define TXBUF_SIZE 20                               /* TX buffer size */
+#define RXBUF_SIZE 60                               /* RX buffer size */
+#define TXBUF_SIZE 60                               /* TX buffer size */
 #define RX_TIMEOUT 1000                             /* Inactivity period after the instant when last char was received that triggers an rx event (in us) */
 const struct uart_config uart_cfg = {
 		.baudrate = 115200,
@@ -95,7 +96,7 @@ static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C0_NODE);
 
 #define MAX_CMDSTRING_SIZE 20   /**<Maximum size of the command string.*/ 
 #define SOF_SYM '#'	            /**<Start of Frame Symbol.*/
-#define EOF_SYM '\r'            /**<End of Frame Symbol.*/
+#define EOF_SYM 0xd             /**<End of Frame Symbol.*/
 
 /* Internal variables for the UART RX processing */
 volatile char cmdString[MAX_CMDSTRING_SIZE];    /**<Command string buffer. */
@@ -129,7 +130,7 @@ void main(void)
 {
     /* Local vars */    
     int err=0; /* Generic error variable */
-    uint8_t welcome_mesg[] = "UART demo: Type a few chars in a row and then pause for a little while ...\n\r"; 
+    uint8_t welcome_mesg[] = "Mini-Project\n\n\r"; 
 
     /* Bind to UART */
     uart_dev = device_get_binding(DT_LABEL(UART_NODE));
@@ -197,10 +198,10 @@ void main(void)
  */
 int cmdProcessor(void)
 {
-	int i = 0, cmdStringRemain = 0;                     /**<Variables to store the index of the SOF and the remaining chars in the cmdString. */
-    char F[3] = {};                                     /**<Variables to store the Frequency values for each char.*/
-	char Cs = 0;                                        /**<Variable to store the Checksum value.*/
-    int freq = 0;                                       /**<Variable to store the frequency value.*/
+	int i=0, cmdStringRemain = 0;                     /**<Variables to store the index of the SOF and the remaining chars in the cmdString. */
+    char F[3] = {};                                   /**<Variables to store the Frequency values for each char.*/
+	char Cs = 0;                                      /**<Variable to store the Checksum value.*/
+    int freq = 0;                                     /**<Variable to store the frequency value.*/
 
 	/* Detect empty cmd string */
 	if(cmdStringLen == 0)
@@ -208,7 +209,7 @@ int cmdProcessor(void)
 	
 	/* Find index of SOF */
 	for(i=0; i < cmdStringLen; i++) {
-		if(cmdString[i] == SOF_SYM) {
+        if(cmdString[i] == SOF_SYM) {
 			break;
 		}
 	}
@@ -216,42 +217,60 @@ int cmdProcessor(void)
 	/* If a SOF was found look for commands */
 	if(i < cmdStringLen) {
 		if(cmdString[i+1] == 'L' && cmdString[i+2] == 'F') { /* LF command detected */
-            cmdStringRemain = cmdStringLen - 5;
+            cmdStringRemain = cmdStringLen - 4;              /* 4 non-relevant characters ('#','L','F' and "enter") */ 
 
-            if(cmdStringRemain > 3) {
+            if(cmdStringRemain > 3) {                        /* 3 maximum digits for frequency*/
                 return STR_WRONG_FORMAT;
             }
 
             for(int k = 0; k < cmdStringRemain; k++) {
                 F[k] = cmdString[k+3];
-                if(F[k] < '0' || F[k] > '9') {
+                if(F[k] < '0' || F[k] > '9') {               /* Check value of constants*/
 				    return STR_WRONG_FORMAT;
 			    }
-                Cs += (unsigned char)(F[k]);
+                //Cs += (unsigned char)(F[k]);
             }
 
-			Cs += (unsigned char)('L' + 'F');
+            /* Check value of Checksum*/
+			/*Cs += (unsigned char)('L' + 'F');
 			if(Cs != cmdString[cmdStringLen-1]){
 				return CS_ERROR;
-			}
+			}*/
 			
-			if(cmdString[cmdStringLen] != EOF_SYM){
+            /* Check character of EOF*/
+			if(cmdString[cmdStringLen-1] != EOF_SYM){
 				return CMD_ERROR_STRING;
 			}
 
+            /* Calculates frequency */
             for(int k = 0; k < cmdStringRemain; k++) {
-                if(k == 0){
-                    freq += (F[k] - '0') * 100;
+                if (cmdStringRemain == 3){
+                    if(k == 0){
+                        freq += (F[k] - '0') * 100;
+                    }
+                    else if(k == 1){
+                        freq += (F[k] - '0') * 10;
+                    }
+                    else if(k == 2){
+                        freq += (F[k] - '0');
+                    }        
                 }
-                else if(k == 1){
-                    freq += (F[k] - '0') * 10;
+                if (cmdStringRemain == 2){
+                    if(k == 0){
+                        freq += (F[k] - '0') * 10;
+                    }
+                    else if(k == 1){
+                        freq += (F[k] - '0');
+                    }
                 }
-                else if(k == 2){
+                if (cmdStringRemain == 1){
                     freq += (F[k] - '0');
                 }
             }
 
-            ledThreadPeriod = 1/freq;
+            printk("freq = %d\n\r",freq);
+            //ledThreadPeriod = round(1.0/freq*1000);
+            //printk("led period = %d\n\r",ledThreadPeriod);
 
 			return CMD_SUCCESS;
 		}
@@ -297,24 +316,11 @@ int cmdProcessor(void)
 			return CMD_SUCCESS;
 		}
 		
-		if(cmdString[i+1] == 'S') { /* S command detected */
-			Cs = (unsigned char)('S');
-			if(Cs != cmdString[i+2]){
-				return CS_ERROR;
-			}
-
-			if(cmdString[i+3] != EOF_SYM){
-				return CMD_ERROR_STRING;
-			}
-
-			return CMD_SUCCESS;
-		}	
 		return CMD_INVALID;	/* No valid command found */
 	}
 	
 	/* cmd string not null and SOF not found */
 	return STR_WRONG_FORMAT;
-
 }
 
 /**
@@ -495,28 +501,28 @@ void uartThread(void *argA , void *argB, void *argC)
     
     while(1) {
         k_sem_take(&sem_uart,  K_FOREVER);
+
         
         if(uart_rxbuf_nchar > 0) {
             rx_chars[uart_rxbuf_nchar] = 0; /* Terminate the string */
-
             sprintf(rep_mesg,"You typed [%s]\r",rx_chars);  
             
             c = rx_chars[uart_rxbuf_nchar-1];
 
             if(c == 0xd) {
-
+                printk("\nMessage Sent!\n\r");
                 for(int k = 0; k < uart_rxbuf_nchar; k++){
                     cmdString[k] = rx_chars[k];
                 }
                 cmdStringLen = uart_rxbuf_nchar;
 
+                cmdProcessor();
                 for (int i = 0; i < uart_rxbuf_nchar; i++){
                     rx_chars[i] = 0;
                 }
                 uart_rxbuf_nchar = 0;
-
             }
-            
+
             err = uart_tx(uart_dev, rep_mesg, strlen(rep_mesg), SYS_FOREVER_MS);
             if (err) {
                 printk("uart_tx() error. Error code:%d\n\r",err);
