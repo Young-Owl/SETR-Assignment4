@@ -616,7 +616,7 @@ void uartThread(void *argA , void *argB, void *argC)
     /* Local vars*/
     int err=0;        /* Generic error variable */
     uint8_t rep_mesg[TXBUF_SIZE];
-    char c;
+    char c, a;
 
     #ifdef DEBUG
         printk("Thread uart init (sporadic)\n");
@@ -639,19 +639,11 @@ void uartThread(void *argA , void *argB, void *argC)
             if(c == 0xd) {
                 
                 for(int k = 0; k <= uart_rxbuf_nchar; k++){
-                    cmdString[k] = rx_chars[k];
-                    /*if(k == uart_rxbuf_nchar-2){
-                        for(int i = 1; i < k; i++){
-                            cmdString[k+1] += (unsigned char)(rx_chars[i]);
-                            printk("%c", cmdString[k]);
-                        }
-                        cmdString[k+2] = rx_chars[k+1];
-                        break;
-                    }*/
+                    a = rx_chars[k];
+                    newCmdChar(a);
                 }
 
                 cmdStringLen = uart_rxbuf_nchar;
-                //cmdStringLen = uart_rxbuf_nchar + 1;
 
                 printk("\nMessage Sent: %s\n\r", cmdString);
 
@@ -747,5 +739,15 @@ static void button_pressed(const struct device *dev, struct gpio_callback *cb, u
             break;
         default:
             break;
+    }
+}
+
+/**
+ * @brief Adds a char to the cmdString
+ */ 
+void newCmdChar(unsigned char newChar)
+{
+    for(int k = 0; k <= uart_rxbuf_nchar; k++){
+      cmdString[k] = newChar;
     }
 }
