@@ -1,7 +1,9 @@
-/*
- * Copyright (c) 2012-2014 Wind River Systems, Inc.
- *
- * SPDX-License-Identifier: Apache-2.0
+/** @file cmdproc.h
+ * @brief Base code for Unit Testing.
+ * 
+ * @author Paulo Pedreiras
+ * @date 27 March 2023
+ * @bug No known bugs.
  */
 
 #include <zephyr/kernel.h>          /* for kernel functions*/
@@ -59,13 +61,13 @@ k_tid_t i2cThreadID;                                /**<I2C Thread ID */
 void i2cThread(void *argA, void *argB, void *argC); /* I2C Thread code prototypes */
 
 /* UART Thread config and other configs */
-#define uartThreadPrio 1                            /**<uart Thread priority (default 1) */
+#define uartThreadPrio 1                            /**<UART Thread priority (default 1) */
 K_THREAD_STACK_DEFINE(uartThreadStack, STACK_SIZE); /* Create thread stack space */
-struct k_thread uartThreadData;                     /**<uart Thread data structure */
-k_tid_t uartThreadID;                               /**<uart Thread ID */
-#define RXBUF_SIZE 150                              /* RX buffer size */
-#define TXBUF_SIZE 150                              /* TX buffer size */
-#define RX_TIMEOUT 1000                             /* Inactivity period after the instant when last char was received that triggers an rx event (in us) */
+struct k_thread uartThreadData;                     /**<UART Thread data structure */
+k_tid_t uartThreadID;                               /**<UART Thread ID */
+#define RXBUF_SIZE 150                              /**<RX buffer size */
+#define TXBUF_SIZE 150                              /**<TX buffer size */
+#define RX_TIMEOUT 1000                             /**<Inactivity period after the instant when last char was received that triggers an rx event (in us) */
 const struct uart_config uart_cfg = {
 		.baudrate = 115200,
 		.parity = UART_CFG_PARITY_NONE,
@@ -74,7 +76,7 @@ const struct uart_config uart_cfg = {
 		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE
 };
 
-void uartThread(void *argA, void *argB, void *argC);/* uart Thread code prototypes */
+void uartThread(void *argA, void *argB, void *argC);/* UART Thread code prototypes */
 
 /* UART related variables */
 const struct device *uart_dev;                      /* Pointer to device struct */ 
@@ -97,15 +99,15 @@ static const struct device * gpio0_dev = DEVICE_DT_GET(GPIO0_NODE);
 static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C0_NODE);
 
 /* Defines for return codes of the functions */
-#define CMD_SUCCESS       0     /**<Return value when a correct command is read.*/
-#define CMD_ERROR_STRING -1     /**<Return value when an empty string or incomplete command was found.*/
-#define CMD_INVALID      -2     /**<Return value when an invalid command was found.*/
-#define CS_ERROR         -3     /**<Return value when a CS error is detected.*/
-#define STR_WRONG_FORMAT -4     /**<Return value when the string format is wrong.*/             
+#define CMD_SUCCESS       0                     /**<Return value when a correct command is read.*/
+#define CMD_ERROR_STRING -1                     /**<Return value when an empty string or incomplete command was found.*/
+#define CMD_INVALID      -2                     /**<Return value when an invalid command was found.*/
+#define CS_ERROR         -3                     /**<Return value when a CS error is detected.*/
+#define STR_WRONG_FORMAT -4                     /**<Return value when the string format is wrong.*/             
 
-#define MAX_CMDSTRING_SIZE 20   /**<Maximum size of the command string.*/ 
-#define SOF_SYM '#'	            /**<Start of Frame Symbol.*/
-#define EOF_SYM 0xd             /**<End of Frame Symbol.*/
+#define MAX_CMDSTRING_SIZE 20                   /**<Maximum size of the command string.*/ 
+#define SOF_SYM '#'	                            /**<Start of Frame Symbol (#)*/
+#define EOF_SYM 0xd                             /**<End of Frame Symbol (\r)*/
 
 /* Internal variables for the UART RX processing */
 volatile char cmdString[MAX_CMDSTRING_SIZE];    /**<Command string buffer. */
@@ -119,15 +121,14 @@ struct k_sem sem_uart;
 /* UART callback function prototype */
 static void uart_cb(const struct device *dev, struct uart_event *evt, void *user_data);
 
-
 /**
  * @brief This structure contains all the data that is shared between the threads.
  *
  */ 
 struct miniData {
-    uint8_t led[4];
-    uint8_t buttonState[4];
-    uint16_t temp;
+    uint8_t led[4];                     /**<Led state vector */
+    uint8_t buttonState[4];             /**<Button state vector */
+    uint16_t temp;                      /**<Temperature value */
 };
 
 /* Initialize the miniData structure variables */
@@ -163,7 +164,7 @@ void main(void)
         return; 
     }
 
-    /* Register callback */
+    /* Register UART callback */
     err = uart_callback_set(uart_dev, uart_cb, NULL);
     if (err) {
         printk("uart_callback_set() error. Error code:%d\n\r",err);
@@ -179,13 +180,16 @@ void main(void)
 
     printk("UART configured and enabled\n\r");
     
+    /* Start Button configuration */
     if (!device_is_ready(gpio0_dev)) { return; }
 
+    /* Configure all buttons as INPUTs */
     for(int i=0; i<sizeof(buttons_pins); i++) {
 		ret = gpio_pin_configure(gpio0_dev, buttons_pins[i], GPIO_INPUT | GPIO_PULL_UP);
 		if (ret < 0)  {return; }
     }
 
+    /* Configure all buttons as interrupts */
     for(int i=0; i<sizeof(buttons_pins); i++) {
 		ret = gpio_pin_interrupt_configure(gpio0_dev, buttons_pins[i], GPIO_INT_EDGE_TO_ACTIVE );
 		if (ret < 0) { return; }
@@ -195,6 +199,8 @@ void main(void)
 	for(int i=0; i<sizeof(buttons_pins); i++) {
 		pinmask |= BIT(buttons_pins[i]);
 	}
+
+    /* Initialize the callback structure for the buttons */
 	gpio_init_callback(&button_cb_data, button_pressed, pinmask);	
 	
 	/* Add the callback function by calling gpio_add_callback()   */
@@ -229,13 +235,21 @@ void main(void)
 /**
  * @brief This function processes commands received via UART.
  * 
+ * The function processes the characters received via UART and tries to find a valid command.
+ * The following commands are supported:
+ * - #LxSy: Set the state of the LED x (x=0,1,2,3) to y (y=0,1).
+ * - #Bx: Read the state of the button x (x=0,1,2,3).
+ * - #T: Read the temperature value.
+ * - #LFxxx: Set the frequency of the Led Thread from 1Hz up to 999Hz (No need to write all characters).
+ * - #BFxxx: Set the frequency of the Button Thread from 1Hz up to 999Hz (No need to write all characters).
+ * - #TFxxx: Set the frequency of the I2C Thread from 1Hz up to 999Hz (No need to write all characters).
+ * 
  * @return int Returns a value to indicate whether the command was valid or not.
  */
 int cmdProcessor(void)
 {
 	int i = 0, cmdStringRemain = 0;         /**<Variables to store the index of the SOF and the remaining chars in the cmdString. */
     char F[3] = {};                         /**<Variables to store the Frequency values for each char.*/
-	char Cs = 0;                            /**<Variable to store the Checksum value.*/
     int freq = 0;                           /**<Variable to store the frequency value.*/
     int err = 0;                            /* Generic error variable */
     uint8_t rep_mesg[TXBUF_SIZE];
@@ -298,6 +312,7 @@ int cmdProcessor(void)
                 }
             }
 
+            /* Change Led Thread Period */
             ledThreadPeriod = 1.0/freq*1000;
 			return CMD_SUCCESS;
 		}
@@ -347,6 +362,7 @@ int cmdProcessor(void)
                 }
             }
 
+            /* Change Button Thread Period */
             btnThreadPeriod = 1.0/freq*1000;
 			return CMD_SUCCESS;
 		}
@@ -400,7 +416,7 @@ int cmdProcessor(void)
 			return CMD_SUCCESS;
 		}
 		
-        if(cmdString[i+1] == 'L' && cmdString[i+3] == 'S') {     /* LxSy command detected, x=[1,2,3,4] and y=[0,1] */
+        if(cmdString[i+1] == 'L' && cmdString[i+3] == 'S') { /* LxSy command detected, x=[1,2,3,4] and y=[0,1] */
             if(cmdString[i+2] < '1' || cmdString[i+2] > '4') {   /* Check value of LED number */
                     return STR_WRONG_FORMAT;
             }
@@ -421,7 +437,7 @@ int cmdProcessor(void)
 			return CMD_SUCCESS;
 		}
 
-        if(cmdString[i+1] == 'B' && cmdStringLen == 4) {          /* Bx command detected */
+        if(cmdString[i+1] == 'B' && cmdStringLen == 4) {     /* Bx command detected */
             if(cmdString[i+2] < '1' || cmdString[i+2] > '4') {    /* Check value of Button number */
                     return STR_WRONG_FORMAT;
             }
@@ -438,7 +454,7 @@ int cmdProcessor(void)
 			return CMD_SUCCESS;
 		}
 
-        if(cmdString[i+1] == 'T') {                               /* T command detected */
+        if(cmdString[i+1] == 'T') {                          /* T command detected */
             /* Check character of EOF*/
 			if(cmdString[cmdStringLen-1] != EOF_SYM){
 				return CMD_ERROR_STRING;
@@ -611,6 +627,10 @@ void i2cThread(void *argA , void *argB, void *argC)
     timing_stop();
 }
 
+/**
+ * @brief UART Thread where it reads all incoming character until receiving EOF to later call cmdProcessor().
+ *
+ */ 
 void uartThread(void *argA , void *argB, void *argC)
 {
     /* Local vars*/
@@ -659,6 +679,10 @@ void uartThread(void *argA , void *argB, void *argC)
     }
 }
 
+/**
+ * @brief UART callback function that reads all incoming characters and stores them in a buffer.
+ *
+ */ 
 static void uart_cb(const struct device *dev, struct uart_event *evt, void *user_data)
 {
     int err;
@@ -711,6 +735,10 @@ static void uart_cb(const struct device *dev, struct uart_event *evt, void *user
 
 }
 
+/**
+ * @brief Button callback function that reads the buttons pressed and stores them in the miniData structure.
+ *
+ */ 
 static void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
 	int button=0;
