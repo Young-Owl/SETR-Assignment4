@@ -119,7 +119,7 @@ static unsigned char cmdStringLen = 0;          /**<Length of the command string
 /* Semaphore for task synch */
 struct k_sem sem_uart;
 
-void newCmdChar(unsigned char newChar, int index);        /* Function to process a new char received from UART */
+void newCmdChar(unsigned char newChar, int index);  /* Function to process a new char received from UART */
 
 /* UART callback function prototype */
 static void uart_cb(const struct device *dev, struct uart_event *evt, void *user_data);
@@ -489,7 +489,6 @@ int cmdProcessor(void)
         
 		return CMD_INVALID;	/* No valid command found */
 	}
-	
 	/* cmd string not null and SOF not found */
 	return STR_WRONG_FORMAT;
 }
@@ -502,23 +501,17 @@ void btnThread(void *argA , void *argB, void *argC)
 {
     /* Local vars */
     int64_t fin_time=0, release_time=0;     /* Timing variables to control task periodicity */
-        
-    int ret=0;     /* Generic return value variable */
     
     /* Task init code */
     #ifdef DEBUG
         printk("Thread BTN init (periodic)\n");
     #endif
-    
-    /* Check if gpio0 device is ready */
-	
-    
+
     /* Compute next release instant */
     release_time = k_uptime_get() + btnThreadPeriod;
 
     /* Thread loop */
-    while(1) {        
-        
+    while(1) {         
         #ifdef DEBUG
             printk("Thread BTN Activated\n\r");
         #endif  
@@ -550,7 +543,6 @@ void btnThread(void *argA , void *argB, void *argC)
 
         }
     }
-
     /* Stop timing functions */
     timing_stop();
 }
@@ -563,8 +555,7 @@ void ledThread(void *argA , void *argB, void *argC)
 {
     /* Local vars */
     int64_t fin_time=0, release_time=0;     /* Timing variables to control task periodicity */
-        
-    int ret=0;     /* Generic return value variable */
+    int ret=0;                              /* Generic return value variable */
     
     /* Task init code */
     #ifdef DEBUG
@@ -583,8 +574,7 @@ void ledThread(void *argA , void *argB, void *argC)
     release_time = k_uptime_get() + ledThreadPeriod;
 
     /* Thread loop */
-    while(1) {        
-        
+    while(1) {            
         #ifdef DEBUG
             printk("Thread LED Activated\n\r");
         #endif  
@@ -604,7 +594,6 @@ void ledThread(void *argA , void *argB, void *argC)
 
         }
     }
-
     /* Stop timing functions */
     timing_stop();
 }
@@ -660,7 +649,6 @@ void i2cThread(void *argA , void *argB, void *argC)
             release_time += i2cThreadPeriod;
         }
     }
-
     /* Stop timing functions */
     timing_stop();
 }
@@ -713,7 +701,6 @@ void uartThread(void *argA , void *argB, void *argC)
         }
         k_msleep(1);
     }
-
 }
 
 /**
@@ -725,7 +712,6 @@ static void uart_cb(const struct device *dev, struct uart_event *evt, void *user
     int err;
 
     switch (evt->type) {
-	
         case UART_TX_DONE:
 		    //printk("UART_TX_DONE event \n\r");
             break;
@@ -794,8 +780,6 @@ static void button_pressed(const struct device *dev, struct gpio_callback *cb, u
  * @brief Adds a char to the cmdString
  */ 
 void newCmdChar(unsigned char newChar, int index)
-{
-    
+{  
     cmdString[index] = newChar;
-
 }
