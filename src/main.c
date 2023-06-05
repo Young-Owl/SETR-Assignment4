@@ -18,13 +18,19 @@
 #include <math.h>
 
 /* Debug define */
-#define DEBUG
+//#define DEBUG
 
 /* Error define */
 #define FATAL_ERR -1                                /* Fatal error return code, app terminates */
 
 /* Size of stack area used by each thread*/
 #define STACK_SIZE 1024
+
+/* Define Buttons */
+#define BTN1 11
+#define BTN2 12
+#define BTN3 24
+#define BTN4 25
 
 /* Button Thread config */
 #define btnThreadPrio 1                             /**<Button Thread priority (default 1) */
@@ -33,6 +39,8 @@ K_THREAD_STACK_DEFINE(btnThreadStack, STACK_SIZE);  /* Create thread stack space
 struct k_thread btnThreadData;                      /**<Button Thread data structure */
 k_tid_t btnThreadID;                                /**<Button Thread ID */
 void btnThread(void *argA, void *argB, void *argC); /* Button Thread code prototypes */
+static struct gpio_callback button_cb_data;         /* Button callback data structure */
+static void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins); /* Button callback function */
 
 /* Led Thread config */
 #define ledThreadPrio 1                             /**<Led Thread priority (default 1) */
@@ -55,8 +63,8 @@ void i2cThread(void *argA, void *argB, void *argC); /* I2C Thread code prototype
 K_THREAD_STACK_DEFINE(uartThreadStack, STACK_SIZE); /* Create thread stack space */
 struct k_thread uartThreadData;                     /**<uart Thread data structure */
 k_tid_t uartThreadID;                               /**<uart Thread ID */
-#define RXBUF_SIZE 60                               /* RX buffer size */
-#define TXBUF_SIZE 60                               /* TX buffer size */
+#define RXBUF_SIZE 150                              /* RX buffer size */
+#define TXBUF_SIZE 150                              /* TX buffer size */
 #define RX_TIMEOUT 1000                             /* Inactivity period after the instant when last char was received that triggers an rx event (in us) */
 const struct uart_config uart_cfg = {
 		.baudrate = 115200,
@@ -65,6 +73,7 @@ const struct uart_config uart_cfg = {
 		.data_bits = UART_CFG_DATA_BITS_8,
 		.flow_ctrl = UART_CFG_FLOW_CTRL_NONE
 };
+
 void uartThread(void *argA, void *argB, void *argC);/* uart Thread code prototypes */
 
 /* UART related variables */
@@ -87,7 +96,7 @@ static const struct device * gpio0_dev = DEVICE_DT_GET(GPIO0_NODE);
 #define I2C0_NODE DT_NODELABEL(tempsensor)
 static const struct i2c_dt_spec dev_i2c = I2C_DT_SPEC_GET(I2C0_NODE);
 
-/* Defines for the */
+/* Defines for return codes of the functions */
 #define CMD_SUCCESS       0     /**<Return value when a correct command is read.*/
 #define CMD_ERROR_STRING -1     /**<Return value when an empty string or incomplete command was found.*/
 #define CMD_INVALID      -2     /**<Return value when an invalid command was found.*/
@@ -119,8 +128,14 @@ struct miniData {
     uint8_t led[4];
     uint8_t buttonState[4];
     uint16_t temp;
-} miniData;
+};
 
+/* Initialize the miniData structure variables */
+struct miniData miniData = {
+    .led = {0,0,0,0},
+    .buttonState = {0,0,0,0},
+    .temp = 0
+};
 
 /**
  * @brief Main Function where all the threads and sempahores are initialized.
@@ -129,8 +144,8 @@ struct miniData {
 void main(void)
 {
     /* Local vars */    
-    int err=0; /* Generic error variable */
-    uint8_t welcome_mesg[] = "Mini-Project\n\n\r"; 
+    int err=0; /* Generic error variable */ 
+    int ret=0; /* Generic return variable */
 
     /* Bind to UART */
     uart_dev = device_get_binding(DT_LABEL(UART_NODE));
@@ -162,26 +177,46 @@ void main(void)
         return;
     }
 
-    /* Send a welcome message */ 
-    /* Last arg is timeout. Only relevant if flow controll is used */
-    err = uart_tx(uart_dev, welcome_mesg, sizeof(welcome_mesg), SYS_FOREVER_MS);
-    if (err) {
-        printk("uart_tx() error. Error code:%d\n\r",err);
-        return;
-    }
+    printk("UART configured and enabled\n\r");
     
+    if (!device_is_ready(gpio0_dev)) { return; }
+
+    for(int i=0; i<sizeof(buttons_pins); i++) {
+		ret = gpio_pin_configure(gpio0_dev, buttons_pins[i], GPIO_INPUT | GPIO_PULL_UP);
+		if (ret < 0)  {return; }
+    }
+
+    for(int i=0; i<sizeof(buttons_pins); i++) {
+		ret = gpio_pin_interrupt_configure(gpio0_dev, buttons_pins[i], GPIO_INT_EDGE_TO_ACTIVE );
+		if (ret < 0) { return; }
+	}
+
+    uint32_t pinmask = 0;
+	for(int i=0; i<sizeof(buttons_pins); i++) {
+		pinmask |= BIT(buttons_pins[i]);
+	}
+	gpio_init_callback(&button_cb_data, button_pressed, pinmask);	
+	
+	/* Add the callback function by calling gpio_add_callback()   */
+	gpio_add_callback(gpio0_dev, &button_cb_data);
+
     /* Create and init semaphore */
     k_sem_init(&sem_uart, 0, 1);
 
+    /* Create the Led Thread */
+	ledThreadID = k_thread_create(&ledThreadData, ledThreadStack,
+        K_THREAD_STACK_SIZEOF(ledThreadStack), ledThread,
+        NULL, NULL, NULL, ledThreadPrio, 0, K_NO_WAIT);
+
     /* Create the Button Thread */
-	/*btnThreadID = k_thread_create(&btnThreadData, btnThreadStack,
+	btnThreadID = k_thread_create(&btnThreadData, btnThreadStack,
         K_THREAD_STACK_SIZEOF(btnThreadStack), btnThread,
-        NULL, NULL, NULL, btnThreadPrio, 0, K_NO_WAIT);*/
+        NULL, NULL, NULL, btnThreadPrio, 0, K_NO_WAIT);
 
     /* Create the I2C Thread */
-    /*i2cThreadID = k_thread_create(&i2cThreadData, i2cThreadStack,
+    i2cThreadID = k_thread_create(&i2cThreadData, i2cThreadStack,
         K_THREAD_STACK_SIZEOF(i2cThreadStack), i2cThread,
-        NULL, NULL, NULL, i2cThreadPrio, 0, K_NO_WAIT);*/
+        NULL, NULL, NULL, i2cThreadPrio, 0, K_NO_WAIT);
 
     /* Create the UART Thread*/
     uartThreadID = k_thread_create(&uartThreadData, uartThreadStack,
@@ -198,10 +233,12 @@ void main(void)
  */
 int cmdProcessor(void)
 {
-	int i=0, cmdStringRemain = 0;                     /**<Variables to store the index of the SOF and the remaining chars in the cmdString. */
-    char F[3] = {};                                   /**<Variables to store the Frequency values for each char.*/
-	char Cs = 0;                                      /**<Variable to store the Checksum value.*/
-    int freq = 0;                                     /**<Variable to store the frequency value.*/
+	int i = 0, cmdStringRemain = 0;         /**<Variables to store the index of the SOF and the remaining chars in the cmdString. */
+    char F[3] = {};                         /**<Variables to store the Frequency values for each char.*/
+	char Cs = 0;                            /**<Variable to store the Checksum value.*/
+    int freq = 0;                           /**<Variable to store the frequency value.*/
+    int err = 0;                            /* Generic error variable */
+    uint8_t rep_mesg[TXBUF_SIZE];
 
 	/* Detect empty cmd string */
 	if(cmdStringLen == 0)
@@ -216,8 +253,57 @@ int cmdProcessor(void)
 	
 	/* If a SOF was found look for commands */
 	if(i < cmdStringLen) {
-		if(cmdString[i+1] == 'L' && cmdString[i+2] == 'F') { /* LF command detected */
+		if(cmdString[i+1] == 'L' && cmdString[i+2] == 'F') { /* LF command detected */ 
             cmdStringRemain = cmdStringLen - 4;              /* 4 non-relevant characters ('#','L','F' and "enter") */ 
+
+            if(cmdStringRemain > 3) {                        /* 3 maximum digits for frequency */
+                return STR_WRONG_FORMAT;
+            }
+
+            for(int k = 0; k < cmdStringRemain; k++) {
+                F[k] = cmdString[k+3];
+                if(F[k] < '0' || F[k] > '9') {               /* Check value of constants*/
+				    return STR_WRONG_FORMAT;
+			    }
+            }
+            
+            /* Check character of EOF*/
+			if(cmdString[cmdStringLen-1] != EOF_SYM){
+				return CMD_ERROR_STRING;
+			}
+
+            /* Calculates frequency */
+            for(int k = 0; k < cmdStringRemain; k++) {
+                if (cmdStringRemain == 3){
+                    if(k == 0){
+                        freq += (F[k] - '0') * 100;
+                    }
+                    else if(k == 1){
+                        freq += (F[k] - '0') * 10;
+                    }
+                    else if(k == 2){
+                        freq += (F[k] - '0');
+                    }        
+                }
+                if (cmdStringRemain == 2){
+                    if(k == 0){
+                        freq += (F[k] - '0') * 10;
+                    }
+                    else if(k == 1){
+                        freq += (F[k] - '0');
+                    }
+                }
+                if (cmdStringRemain == 1){
+                    freq += (F[k] - '0');
+                }
+            }
+
+            ledThreadPeriod = 1.0/freq*1000;
+			return CMD_SUCCESS;
+		}
+
+        if(cmdString[i+1] == 'B' && cmdString[i+2] == 'F') { /* BF command detected */
+            cmdStringRemain = cmdStringLen - 4;              /* 4 non-relevant characters ('#','B','F' and "enter") */ 
 
             if(cmdStringRemain > 3) {                        /* 3 maximum digits for frequency*/
                 return STR_WRONG_FORMAT;
@@ -228,14 +314,56 @@ int cmdProcessor(void)
                 if(F[k] < '0' || F[k] > '9') {               /* Check value of constants*/
 				    return STR_WRONG_FORMAT;
 			    }
-                //Cs += (unsigned char)(F[k]);
+            }
+            
+            /* Check character of EOF*/
+			if(cmdString[cmdStringLen-1] != EOF_SYM){
+				return CMD_ERROR_STRING;
+			}
+
+            /* Calculates frequency */
+            for(int k = 0; k < cmdStringRemain; k++) {
+                if (cmdStringRemain == 3){
+                    if(k == 0){
+                        freq += (F[k] - '0') * 100;
+                    }
+                    else if(k == 1){
+                        freq += (F[k] - '0') * 10;
+                    }
+                    else if(k == 2){
+                        freq += (F[k] - '0');
+                    }        
+                }
+                if (cmdStringRemain == 2){
+                    if(k == 0){
+                        freq += (F[k] - '0') * 10;
+                    }
+                    else if(k == 1){
+                        freq += (F[k] - '0');
+                    }
+                }
+                if (cmdStringRemain == 1){
+                    freq += (F[k] - '0');
+                }
             }
 
-            /* Check value of Checksum*/
-			/*Cs += (unsigned char)('L' + 'F');
-			if(Cs != cmdString[cmdStringLen-1]){
-				return CS_ERROR;
-			}*/
+            btnThreadPeriod = 1.0/freq*1000;
+			return CMD_SUCCESS;
+		}
+
+        if(cmdString[i+1] == 'T' && cmdString[i+2] == 'F') { /* TF command detected */
+            cmdStringRemain = cmdStringLen - 4;              /* 4 non-relevant characters ('#','T','F' and "enter") */ 
+
+            if(cmdStringRemain > 3) {                        /* 3 maximum digits for frequency*/
+                return STR_WRONG_FORMAT;
+            }
+
+            for(int k = 0; k < cmdStringRemain; k++) {
+                F[k] = cmdString[k+3];
+                if(F[k] < '0' || F[k] > '9') {               /* Check value of constants*/
+				    return STR_WRONG_FORMAT;
+			    }
+            }
 			
             /* Check character of EOF*/
 			if(cmdString[cmdStringLen-1] != EOF_SYM){
@@ -268,54 +396,62 @@ int cmdProcessor(void)
                 }
             }
 
-            printk("freq = %d\n\r",freq);
-            //ledThreadPeriod = round(1.0/freq*1000);
-            //printk("led period = %d\n\r",ledThreadPeriod);
-
-			return CMD_SUCCESS;
-		}
-
-        if(cmdString[i+1] == 'B' && cmdString[i+2] == 'F') { /* LF command detected */
-            cmdStringRemain = cmdStringLen - 5;
-
-            if(cmdStringRemain > 3) {
-                return STR_WRONG_FORMAT;
-            }
-
-            for(int k = 0; k < cmdStringRemain; k++) {
-                F[k] = cmdString[k+3];
-                if(F[k] < '0' || F[k] > '9') {
-				    return STR_WRONG_FORMAT;
-			    }
-                Cs += (unsigned char)(F[k]);
-            }
-
-			Cs += (unsigned char)('L' + 'F');
-			if(Cs != cmdString[cmdStringLen-1]){
-				return CS_ERROR;
-			}
-			
-			if(cmdString[cmdStringLen] != EOF_SYM){
-				return CMD_ERROR_STRING;
-			}
-
-            for(int k = 0; k < cmdStringRemain; k++) {
-                if(k == 0){
-                    freq += (F[k] - '0') * 100;
-                }
-                else if(k == 1){
-                    freq += (F[k] - '0') * 10;
-                }
-                else if(k == 2){
-                    freq += (F[k] - '0');
-                }
-            }
-
-            btnThreadPeriod = 1/freq;
-
+            i2cThreadPeriod = 1.0/freq*1000;
 			return CMD_SUCCESS;
 		}
 		
+        if(cmdString[i+1] == 'L' && cmdString[i+3] == 'S') {     /* LxSy command detected, x=[1,2,3,4] and y=[0,1] */
+            if(cmdString[i+2] < '1' || cmdString[i+2] > '4') {   /* Check value of LED number */
+                    return STR_WRONG_FORMAT;
+            }
+
+            if(cmdString[i+4] < '0' || cmdString[i+4] > '1') {   /* Check value of LED state */
+                    return STR_WRONG_FORMAT;
+            }
+			
+            /* Check character of EOF*/
+			if(cmdString[cmdStringLen-1] != EOF_SYM){
+				return CMD_ERROR_STRING;
+			}
+
+            /* Update LED State */
+            miniData.led[cmdString[i+2] - '0' - 1] = cmdString[i+4] - '0';
+            printk("LED %d = %d\n\r",cmdString[i+2] - '0',miniData.led[cmdString[i+2] - '0' - 1]);
+
+			return CMD_SUCCESS;
+		}
+
+        if(cmdString[i+1] == 'B' && cmdStringLen == 4) {          /* Bx command detected */
+            if(cmdString[i+2] < '1' || cmdString[i+2] > '4') {    /* Check value of Button number */
+                    return STR_WRONG_FORMAT;
+            }
+
+            /* Check character of EOF*/
+			if(cmdString[cmdStringLen-1] != EOF_SYM){
+				return CMD_ERROR_STRING;
+			}
+            
+            sprintf(rep_mesg,"Button[%d] = %d \n\r",cmdString[i+2] - '0', miniData.buttonState[cmdString[i+2] - '0'-1]);  
+            err = uart_tx(uart_dev, rep_mesg, strlen(rep_mesg), SYS_FOREVER_MS);
+            if (err) { return 0; }
+
+			return CMD_SUCCESS;
+		}
+
+        if(cmdString[i+1] == 'T') {                               /* T command detected */
+            /* Check character of EOF*/
+			if(cmdString[cmdStringLen-1] != EOF_SYM){
+				return CMD_ERROR_STRING;
+			}
+
+            // Send via UART the temperature having in mind the semaphores
+            sprintf(rep_mesg,"Temperature = %d \n\r",miniData.temp);
+            err = uart_tx(uart_dev, rep_mesg, strlen(rep_mesg), SYS_FOREVER_MS);
+            if (err) { return 0; }
+
+			return CMD_SUCCESS;
+		}
+
 		return CMD_INVALID;	/* No valid command found */
 	}
 	
@@ -340,18 +476,8 @@ void btnThread(void *argA , void *argB, void *argC)
     #endif
     
     /* Check if gpio0 device is ready */
-	if (!device_is_ready(gpio0_dev)) { return; }
-
-    for(int i=0; i<sizeof(buttons_pins); i++) {
-		ret = gpio_pin_configure(gpio0_dev, buttons_pins[i], GPIO_INPUT | GPIO_PULL_UP);
-		if (ret < 0) { return; }
-	}
-
-    uint8_t pinmask = 0;
-	for(int i=0; i<sizeof(buttons_pins); i++) {
-		pinmask |= BIT(buttons_pins[i]);
-	}
-           
+	
+    
     /* Compute next release instant */
     release_time = k_uptime_get() + btnThreadPeriod;
 
@@ -361,13 +487,7 @@ void btnThread(void *argA , void *argB, void *argC)
         #ifdef DEBUG
             printk("Thread BTN Activated\n\r");
         #endif  
-        
-        for(int i=0; i<sizeof(buttons_pins); i++){        
-            if(BIT(buttons_pins[i]) & pinmask) {
-                miniData.buttonState[i] = buttons_pins[i];
-            }
-        } 
-       
+
         /* Wait for next release instant */ 
         fin_time = k_uptime_get();
         if( fin_time < release_time) {
@@ -401,9 +521,9 @@ void ledThread(void *argA , void *argB, void *argC)
 	if (!device_is_ready(gpio0_dev)) { return; }
 
     for(int i=0; i<sizeof(leds_pins); i++) {
-		ret = gpio_pin_configure(gpio0_dev, leds_pins[i], GPIO_OUTPUT);
+		ret = gpio_pin_configure(gpio0_dev, leds_pins[i], GPIO_OUTPUT_ACTIVE);
 		if (ret < 0) { return; }
-	}
+    }
            
     /* Compute next release instant */
     release_time = k_uptime_get() + ledThreadPeriod;
@@ -416,7 +536,10 @@ void ledThread(void *argA , void *argB, void *argC)
         #endif  
         
         for(int i=0; i<sizeof(leds_pins); i++){        
-            gpio_pin_set(gpio0_dev, leds_pins[i], miniData.led[i]);
+            gpio_pin_set(gpio0_dev, leds_pins[i], !miniData.led[i]);
+            #ifdef DEBUG
+                //printk("LED %d = %d\n\r",i,miniData.led[i]);
+            #endif
         } 
        
         /* Wait for next release instant */ 
@@ -502,31 +625,42 @@ void uartThread(void *argA , void *argB, void *argC)
     while(1) {
         k_sem_take(&sem_uart,  K_FOREVER);
 
-        
         if(uart_rxbuf_nchar > 0) {
             rx_chars[uart_rxbuf_nchar] = 0; /* Terminate the string */
-            sprintf(rep_mesg,"You typed [%s]\r",rx_chars);  
-            
-            c = rx_chars[uart_rxbuf_nchar-1];
-
-            if(c == 0xd) {
-                printk("\nMessage Sent!\n\r");
-                for(int k = 0; k < uart_rxbuf_nchar; k++){
-                    cmdString[k] = rx_chars[k];
-                }
-                cmdStringLen = uart_rxbuf_nchar;
-
-                cmdProcessor();
-                for (int i = 0; i < uart_rxbuf_nchar; i++){
-                    rx_chars[i] = 0;
-                }
-                uart_rxbuf_nchar = 0;
-            }
-
+            sprintf(rep_mesg,"You typed [%s]\n\r",rx_chars);  
             err = uart_tx(uart_dev, rep_mesg, strlen(rep_mesg), SYS_FOREVER_MS);
             if (err) {
                 printk("uart_tx() error. Error code:%d\n\r",err);
                 return;
+            }
+
+            c = rx_chars[uart_rxbuf_nchar-1];
+
+            if(c == 0xd) {
+                
+                for(int k = 0; k <= uart_rxbuf_nchar; k++){
+                    cmdString[k] = rx_chars[k];
+                    /*if(k == uart_rxbuf_nchar-2){
+                        for(int i = 1; i < k; i++){
+                            cmdString[k+1] += (unsigned char)(rx_chars[i]);
+                            printk("%c", cmdString[k]);
+                        }
+                        cmdString[k+2] = rx_chars[k+1];
+                        break;
+                    }*/
+                }
+
+                cmdStringLen = uart_rxbuf_nchar;
+                //cmdStringLen = uart_rxbuf_nchar + 1;
+
+                printk("\nMessage Sent: %s\n\r", cmdString);
+
+                for (int i = 0; i <= uart_rxbuf_nchar; i++){
+                    rx_chars[i] = 0;
+                }
+                uart_rxbuf_nchar = 0;
+
+                cmdProcessor();
             }
         }
         k_msleep(1);
@@ -551,7 +685,7 @@ static void uart_cb(const struct device *dev, struct uart_event *evt, void *user
 		    //printk("UART_RX_RDY event \n\r");
             /* Just copy data to a buffer. Usually it is preferable to use e.g. a FIFO to communicate with a task that shall process the messages*/
             memcpy(&rx_chars[uart_rxbuf_nchar],&(rx_buf[evt->data.rx.offset]),evt->data.rx.len); 
-            uart_rxbuf_nchar++;       
+            uart_rxbuf_nchar++;      
             k_sem_give(&sem_uart);    
 		    break;
 
@@ -583,4 +717,35 @@ static void uart_cb(const struct device *dev, struct uart_event *evt, void *user
 		    break;
     }
 
+}
+
+static void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+{
+	int button=0;
+
+	/* Read buttons */
+	for(int i=0; i<sizeof(buttons_pins); i++){        
+        if(BIT(buttons_pins[i]) & pins) {
+            button = buttons_pins[i];
+            printk("Button %d pressed\n\r",button);
+        }
+    } 
+
+    switch (button){
+        case BTN1:
+            miniData.buttonState[0] = !miniData.buttonState[0];
+            printk("%d\n\r", miniData.buttonState[0]);
+            break;
+        case BTN2:
+            miniData.buttonState[1] = !miniData.buttonState[1];
+            break;
+        case BTN3:
+            miniData.buttonState[2] = !miniData.buttonState[2];
+            break;
+        case BTN4:
+            miniData.buttonState[3] = !miniData.buttonState[3];
+            break;
+        default:
+            break;
+    }
 }
