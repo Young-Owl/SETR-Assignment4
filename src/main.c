@@ -1,8 +1,8 @@
-/** @file cmdproc.h
- * @brief Base code for Unit Testing.
+/** @file main.c
+ * @brief Main file for the application.
  * 
- * @author Paulo Pedreiras
- * @date 27 March 2023
+ * @author Gonçalo Rodrigues, Gonçalo Soares
+ * @date 5 June 2023
  * @bug No known bugs.
  */
 
@@ -40,6 +40,7 @@ volatile uint16_t btnThreadPeriod = 1000;           /**<Button Thread periodicit
 K_THREAD_STACK_DEFINE(btnThreadStack, STACK_SIZE);  /* Create thread stack space */
 struct k_thread btnThreadData;                      /**<Button Thread data structure */
 k_tid_t btnThreadID;                                /**<Button Thread ID */
+int btnPressed;                                     /**<Button pressed flag */
 void btnThread(void *argA, void *argB, void *argC); /* Button Thread code prototypes */
 static struct gpio_callback button_cb_data;         /* Button callback data structure */
 static void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins); /* Button callback function */
@@ -65,8 +66,8 @@ void i2cThread(void *argA, void *argB, void *argC); /* I2C Thread code prototype
 K_THREAD_STACK_DEFINE(uartThreadStack, STACK_SIZE); /* Create thread stack space */
 struct k_thread uartThreadData;                     /**<UART Thread data structure */
 k_tid_t uartThreadID;                               /**<UART Thread ID */
-#define RXBUF_SIZE 150                              /**<RX buffer size */
-#define TXBUF_SIZE 150                              /**<TX buffer size */
+#define RXBUF_SIZE 200                              /**<RX buffer size */
+#define TXBUF_SIZE 200                              /**<TX buffer size */
 #define RX_TIMEOUT 1000                             /**<Inactivity period after the instant when last char was received that triggers an rx event (in us) */
 const struct uart_config uart_cfg = {
 		.baudrate = 115200,
@@ -117,6 +118,8 @@ static unsigned char cmdStringLen = 0;          /**<Length of the command string
 
 /* Semaphore for task synch */
 struct k_sem sem_uart;
+
+void newCmdChar(unsigned char newChar, int index);        /* Function to process a new char received from UART */
 
 /* UART callback function prototype */
 static void uart_cb(const struct device *dev, struct uart_event *evt, void *user_data);
@@ -314,6 +317,11 @@ int cmdProcessor(void)
 
             /* Change Led Thread Period */
             ledThreadPeriod = 1.0/freq*1000;
+
+            sprintf(rep_mesg,"LED Thread Period = %d \n\r", ledThreadPeriod);
+            err = uart_tx(uart_dev, rep_mesg, strlen(rep_mesg), SYS_FOREVER_MS);
+            if (err) { return 0; }
+
 			return CMD_SUCCESS;
 		}
 
@@ -364,6 +372,11 @@ int cmdProcessor(void)
 
             /* Change Button Thread Period */
             btnThreadPeriod = 1.0/freq*1000;
+
+            sprintf(rep_mesg,"Button Thread Period = %d \n\r", btnThreadPeriod);
+            err = uart_tx(uart_dev, rep_mesg, strlen(rep_mesg), SYS_FOREVER_MS);
+            if (err) { return 0; }
+
 			return CMD_SUCCESS;
 		}
 
@@ -413,6 +426,11 @@ int cmdProcessor(void)
             }
 
             i2cThreadPeriod = 1.0/freq*1000;
+
+            sprintf(rep_mesg,"I2C Thread Period = %d \n\r", i2cThreadPeriod);
+            err = uart_tx(uart_dev, rep_mesg, strlen(rep_mesg), SYS_FOREVER_MS);
+            if (err) { return 0; }
+
 			return CMD_SUCCESS;
 		}
 		
@@ -432,8 +450,9 @@ int cmdProcessor(void)
 
             /* Update LED State */
             miniData.led[cmdString[i+2] - '0' - 1] = cmdString[i+4] - '0';
-            printk("LED %d = %d\n\r",cmdString[i+2] - '0',miniData.led[cmdString[i+2] - '0' - 1]);
-
+            sprintf(rep_mesg,"LED %d = %d \n\r",miniData.led[cmdString[i+2] - '0' + 1],cmdString[i+2] - '0');
+            err = uart_tx(uart_dev, rep_mesg, strlen(rep_mesg), SYS_FOREVER_MS);
+            if (err) { return 0; }
 			return CMD_SUCCESS;
 		}
 
@@ -467,7 +486,7 @@ int cmdProcessor(void)
 
 			return CMD_SUCCESS;
 		}
-
+        
 		return CMD_INVALID;	/* No valid command found */
 	}
 	
@@ -503,6 +522,25 @@ void btnThread(void *argA , void *argB, void *argC)
         #ifdef DEBUG
             printk("Thread BTN Activated\n\r");
         #endif  
+
+        switch (btnPressed){
+            case BTN1:
+                miniData.buttonState[0] = !miniData.buttonState[0];
+                break;
+            case BTN2:
+                miniData.buttonState[1] = !miniData.buttonState[1];
+                break;
+            case BTN3:
+                miniData.buttonState[2] = !miniData.buttonState[2];
+                break;
+            case BTN4:
+                miniData.buttonState[3] = !miniData.buttonState[3];
+                break;
+            default:
+                break;
+        }
+
+        btnPressed = 0;
 
         /* Wait for next release instant */ 
         fin_time = k_uptime_get();
@@ -660,13 +698,11 @@ void uartThread(void *argA , void *argB, void *argC)
                 
                 for(int k = 0; k <= uart_rxbuf_nchar; k++){
                     a = rx_chars[k];
-                    newCmdChar(a);
+                    newCmdChar(a, k);
                 }
-
+                printk("\n");
                 cmdStringLen = uart_rxbuf_nchar;
-
-                printk("\nMessage Sent: %s\n\r", cmdString);
-
+                
                 for (int i = 0; i <= uart_rxbuf_nchar; i++){
                     rx_chars[i] = 0;
                 }
@@ -677,6 +713,7 @@ void uartThread(void *argA , void *argB, void *argC)
         }
         k_msleep(1);
     }
+
 }
 
 /**
@@ -747,35 +784,18 @@ static void button_pressed(const struct device *dev, struct gpio_callback *cb, u
 	for(int i=0; i<sizeof(buttons_pins); i++){        
         if(BIT(buttons_pins[i]) & pins) {
             button = buttons_pins[i];
-            printk("Button %d pressed\n\r",button);
         }
     } 
 
-    switch (button){
-        case BTN1:
-            miniData.buttonState[0] = !miniData.buttonState[0];
-            printk("%d\n\r", miniData.buttonState[0]);
-            break;
-        case BTN2:
-            miniData.buttonState[1] = !miniData.buttonState[1];
-            break;
-        case BTN3:
-            miniData.buttonState[2] = !miniData.buttonState[2];
-            break;
-        case BTN4:
-            miniData.buttonState[3] = !miniData.buttonState[3];
-            break;
-        default:
-            break;
-    }
+    btnPressed = button;
 }
 
 /**
  * @brief Adds a char to the cmdString
  */ 
-void newCmdChar(unsigned char newChar)
+void newCmdChar(unsigned char newChar, int index)
 {
-    for(int k = 0; k <= uart_rxbuf_nchar; k++){
-      cmdString[k] = newChar;
-    }
+    
+    cmdString[index] = newChar;
+
 }
