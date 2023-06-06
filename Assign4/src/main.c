@@ -88,6 +88,9 @@ volatile int uart_rxbuf_nchar=0;                    /* Number of chars currnetly
 /* Vectors fot all INPUTs and OUTPUTs */
 const uint8_t leds_pins[] = {13,14,15,16};          /* Vector with pins where leds are connected */
 const uint8_t buttons_pins[] = {11,12,24,25};       /* Vector with pins where buttons are connected */
+const uint8_t threadfreq_pins[] = {3,4,28};      /* Vector with pins where thread frequencies are connected */
+
+
 
 /* Get node ID for GPIO0, which has leds and buttons */ 
 #define GPIO0_NODE DT_NODELABEL(gpio0)
@@ -211,6 +214,14 @@ void main(void)
 
     /* Create and init semaphore */
     k_sem_init(&sem_uart, 0, 1);
+
+
+    /* Configure ThreadFreq +ins as OUTPUTs */
+
+    for(int i=0; i<sizeof(threadfreq_pins); i++) {
+		ret = gpio_pin_configure(gpio0_dev, threadfreq_pins[i], GPIO_OUTPUT);
+		if (ret < 0)  {return; }
+    }
 
     /* Create the Led Thread */
 	ledThreadID = k_thread_create(&ledThreadData, ledThreadStack,
@@ -512,6 +523,8 @@ void btnThread(void *argA , void *argB, void *argC)
 
     /* Thread loop */
     while(1) {         
+        gpio_pin_toggle(gpio0_dev, threadfreq_pins[0]);
+        //printk(gpio_pin_get(gpio0_dev, threadfreq_pins[0]));
         #ifdef DEBUG
             printk("Thread BTN Activated\n\r");
         #endif  
@@ -538,6 +551,7 @@ void btnThread(void *argA , void *argB, void *argC)
         /* Wait for next release instant */ 
         fin_time = k_uptime_get();
         if( fin_time < release_time) {
+            
             k_msleep(release_time - fin_time);
             release_time += btnThreadPeriod;
 
@@ -574,7 +588,8 @@ void ledThread(void *argA , void *argB, void *argC)
     release_time = k_uptime_get() + ledThreadPeriod;
 
     /* Thread loop */
-    while(1) {            
+    while(1) {      
+        gpio_pin_toggle(gpio0_dev, threadfreq_pins[1]);
         #ifdef DEBUG
             printk("Thread LED Activated\n\r");
         #endif  
@@ -585,7 +600,7 @@ void ledThread(void *argA , void *argB, void *argC)
                 //printk("LED %d = %d\n\r",i,miniData.led[i]);
             #endif
         } 
-       
+
         /* Wait for next release instant */ 
         fin_time = k_uptime_get();
         if( fin_time < release_time) {
@@ -629,7 +644,7 @@ void i2cThread(void *argA , void *argB, void *argC)
 
     /* Thread loop */
     while(1) {        
-        
+        gpio_pin_toggle(gpio0_dev, threadfreq_pins[2]);
         #ifdef DEBUG
             printk("Thread I2C Activated\n\r");
         #endif  
@@ -641,7 +656,7 @@ void i2cThread(void *argA , void *argB, void *argC)
         #ifdef DEBUG
             printk("Temperature: %d\n\r", data);
         #endif
-       
+        
         /* Wait for next release instant */ 
         fin_time = k_uptime_get();
         if( fin_time < release_time) {
