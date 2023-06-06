@@ -251,9 +251,9 @@ void main(void)
  */
 int cmdProcessor(void)
 {
-	int i = 0, cmdStringRemain = 0;         /**<Variables to store the index of the SOF and the remaining chars in the cmdString. */
-    char F[3] = {};                         /**<Variables to store the Frequency values for each char.*/
-    int freq = 0;                           /**<Variable to store the frequency value.*/
+	int i = 0, cmdStringRemain = 0;         /* Variables to store the index of the SOF and the remaining chars in the cmdString. */
+    char F[3] = {};                         /* Variables to store the Frequency values for each char.*/
+    int freq = 0;                           /* Variable to store the frequency value.*/
     int err = 0;                            /* Generic error variable */
     uint8_t rep_mesg[TXBUF_SIZE];
 
