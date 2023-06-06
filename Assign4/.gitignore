@@ -1,0 +1,12 @@
+# editors
+*.swp
+*~
+
+# build
+/build*/
+
+#vscode
+.vscode
+
+#Docs
+docs
