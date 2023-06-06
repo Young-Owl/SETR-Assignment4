@@ -450,7 +450,7 @@ int cmdProcessor(void)
 
             /* Update LED State */
             miniData.led[cmdString[i+2] - '0' - 1] = cmdString[i+4] - '0';
-            sprintf(rep_mesg,"LED %d = %d \n\r",miniData.led[cmdString[i+2] - '0' + 1],cmdString[i+2] - '0');
+            sprintf(rep_mesg,"LED %d = %d \n\r",cmdString[i+2] - '0', cmdString[i+4] - '0');
             err = uart_tx(uart_dev, rep_mesg, strlen(rep_mesg), SYS_FOREVER_MS);
             if (err) { return 0; }
 			return CMD_SUCCESS;
